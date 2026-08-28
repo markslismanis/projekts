@@ -21,7 +21,7 @@ const CREATE_NEW = "__create_new__";
 //   GET    /workouts/<split>              -> flat list of every row in a split
 //   GET    /workouts/<split>/<exercise>   -> {sets, last} for one exercise
 //   DELETE /workouts/<split>/<exercise>   -> wipes one exercise's history
-const API_ROOT = "http://localhost:5000";
+const API_ROOT = "/api";
 const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
 
