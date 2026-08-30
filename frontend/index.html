@@ -8,8 +8,17 @@
 </head>
 <body>
 
+  <!-- SCREEN 0: Login gate -->
+  <section id="login-screen" class="screen active">
+    <div class="card">
+      <h1>Workout Tracker</h1>
+      <p class="subtitle">Sign in to track your workouts</p>
+      <a href="/login" class="split-btn" style="display:block; text-decoration:none; text-align:center;">Sign in with Google</a>
+    </div>
+  </section>
+
   <!-- SCREEN 1: Choose split -->
-  <section id="split-screen" class="screen active">
+  <section id="split-screen" class="screen">
     <div class="card">
       <h1>Choose Your Split</h1>
       <p class="subtitle">Pick a workout type to get started</p>
@@ -18,7 +27,6 @@
         <button class="split-btn" data-split="Lower Body">Lower Body</button>
         <button class="split-btn" data-split="Custom">Custom</button>
       </div>
-      <a href="/login" class="back-btn" style="display:inline-block; margin-top:24px;">Sign in with Google</a>
     </div>
   </section>
 
@@ -76,6 +84,6 @@
     </div>
   </template>
 
-<script src="script.js?v=3"></script>
+<script src="script.js?v=4"></script>
 </body>
 </html>

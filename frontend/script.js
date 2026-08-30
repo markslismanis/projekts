@@ -26,10 +26,10 @@ const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
 
 // ---------- Auth-aware fetch wrapper ----------
-// Every backend call goes through this instead of raw fetch(). If the
-// session isn't logged in, app.py's @login_required returns 401 — this
-// catches that centrally and bounces to Google sign-in, so no individual
-// call site has to remember to check auth itself.
+// Every backend call made *during* app use goes through this instead of raw
+// fetch(). If the session isn't logged in, app.py's @login_required returns
+// 401 — this catches that centrally and bounces to Google sign-in, so no
+// individual call site has to remember to check auth itself.
 async function apiFetch(url, options) {
   const res = await fetch(url, options);
   if (res.status === 401) {
@@ -42,6 +42,7 @@ async function apiFetch(url, options) {
 }
 
 // ---------- Elements ----------
+const loginScreen = document.getElementById("login-screen");
 const splitScreen = document.getElementById("split-screen");
 const workoutScreen = document.getElementById("workout-screen");
 const splitTitle = document.getElementById("split-title");
@@ -58,6 +59,23 @@ let currentSplit = null;
 function showScreen(screen) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   screen.classList.add("active");
+}
+
+// ---------- Initial auth check ----------
+// Runs once on page load. Unlike apiFetch (which auto-redirects to /login
+// on any 401 mid-use), this just quietly decides which screen to show —
+// we don't want to force a Google redirect before the user has even
+// seen the app. login-screen is active by default in the HTML, so if
+// this check fails or the backend is unreachable, that's simply left showing.
+async function checkAuthAndInit() {
+  try {
+    const res = await fetch(`${API_ROOT}/me`);
+    if (res.ok) {
+      showScreen(splitScreen);
+    }
+  } catch (err) {
+    console.error("Could not reach backend to check login status", err);
+  }
 }
 
 // ---------- Split selection ----------
@@ -285,3 +303,6 @@ async function loadState(split) {
     alert("Could not load your workouts. Make sure the backend server is running.");
   }
 }
+
+// ---------- Kick things off ----------
+checkAuthAndInit();
