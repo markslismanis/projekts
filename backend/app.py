@@ -3,8 +3,13 @@ from flask_cors import CORS
 from datetime import datetime
 import sqlite3
 import os
+from dotenv import load_dotenv
+
+basedir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(basedir, "keys.env"))
 
 app = Flask(__name__)
+app.secret_key = os.environ["FLASK_SECRET_KEY"]
 CORS(app)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "dati.db")
@@ -22,6 +27,8 @@ def init_db():
             )
     """)
     conn.close()
+
+init_db()
 
 @app.route("/save/<split>/<exercise>", methods=["POST"])
 def save_workout(split, exercise):
@@ -90,8 +97,3 @@ def delete_exercise_workouts(split, exercise):
     conn.commit()
     conn.close()
     return jsonify({"message": "Workouts deleted!"})
-
-if __name__ == '__main__':
-    init_db()
-    
-    
