@@ -25,6 +25,22 @@ const API_ROOT = "/api";
 const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
 
+// ---------- Auth-aware fetch wrapper ----------
+// Every backend call goes through this instead of raw fetch(). If the
+// session isn't logged in, app.py's @login_required returns 401 — this
+// catches that centrally and bounces to Google sign-in, so no individual
+// call site has to remember to check auth itself.
+async function apiFetch(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    window.location.href = "/login";
+    // Throw so the calling code's try/catch stops instead of using a response
+    // that was never actually meant to be read as data.
+    throw new Error("Not logged in — redirecting");
+  }
+  return res;
+}
+
 // ---------- Elements ----------
 const splitScreen = document.getElementById("split-screen");
 const workoutScreen = document.getElementById("workout-screen");
@@ -182,7 +198,7 @@ function addExerciseCard(name, currentSets, lastSets) {
 
     markSaving();
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${SAVE_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`,
         {
           method: "POST",
@@ -206,7 +222,7 @@ function addExerciseCard(name, currentSets, lastSets) {
   node.querySelector(".remove-exercise-btn").addEventListener("click", async () => {
     if (!confirm(`Remove "${name}" and its logged history? This can't be undone.`)) return;
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${WORKOUTS_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`,
         { method: "DELETE" }
       );
@@ -243,7 +259,7 @@ backBtn.addEventListener("click", () => {
 async function loadState(split) {
   exerciseList.innerHTML = "";
   try {
-    const res = await fetch(`${WORKOUTS_BASE}/${encodeURIComponent(split)}`);
+    const res = await apiFetch(`${WORKOUTS_BASE}/${encodeURIComponent(split)}`);
     if (!res.ok) return;
     const rows = await res.json();
 
@@ -257,7 +273,7 @@ async function loadState(split) {
 
     // Fetch each exercise's current + last sets, one request per exercise
     for (const name of exerciseNames) {
-      const exRes = await fetch(
+      const exRes = await apiFetch(
         `${WORKOUTS_BASE}/${encodeURIComponent(split)}/${encodeURIComponent(name)}`
       );
       if (!exRes.ok) continue;
