@@ -69,6 +69,11 @@ def logout():
     session.pop('user_email', None)
     return redirect("/")
 
+@app.route("/me")
+@login_required
+def me():
+    return jsonify({"email": session['user_email']})
+
 @app.route("/save/<split>/<exercise>", methods=["POST"])
 @login_required
 def save_workout(split, exercise):
