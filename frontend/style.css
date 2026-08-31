@@ -52,7 +52,7 @@ select:focus-visible {
 .screen.active { display: block; }
 
 /* ---------- Split selection screen ---------- */
-#split-screen.active
+#split-screen.active,
 #login-screen.active {
   display: flex;
   align-items: center;
