@@ -11,16 +11,10 @@ const EXERCISES = {
     "Hip Abduction" 
   ]
 };
-// Custom split offers everything from both lists, in one dropdown
 EXERCISES["Custom"] = [...EXERCISES["Upper Body"], ...EXERCISES["Lower Body"]];
 
 const CREATE_NEW = "__create_new__";
 
-// Backend API base — matches app.py's own route prefixes:
-//   POST   /save/<split>/<exercise>       -> saving
-//   GET    /workouts/<split>              -> flat list of every row in a split
-//   GET    /workouts/<split>/<exercise>   -> {sets, last} for one exercise
-//   DELETE /workouts/<split>/<exercise>   -> wipes one exercise's history
 const API_ROOT = "/api";
 const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
@@ -126,7 +120,7 @@ addBtn.addEventListener("click", async () => {
 
   let lastSets = null;
 
-  // Fetch performance from previous session to populate high-transparency ghost values
+  // Fetch previous workout numbers to render as ghost values
   try {
     const res = await apiFetch(
       `${WORKOUTS_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`
@@ -141,17 +135,11 @@ addBtn.addEventListener("click", async () => {
 
   addExerciseCard(name, null, lastSets);
 
-  // Reset dropdown menu selection
   const list = EXERCISES[currentSplit] || [];
   exerciseSelect.value = list[0] ?? CREATE_NEW;
   toggleCustomInput();
 });
 
-/**
- * Builds one exercise card.
- * currentSets: sets saved during active session, or null
- * lastSets: sets from previous session to render as transparent ghost values
- */
 function addExerciseCard(name, currentSets, lastSets) {
   const node = template.content.cloneNode(true);
   const card = node.querySelector(".exercise-card");
@@ -165,11 +153,10 @@ function addExerciseCard(name, currentSets, lastSets) {
     const weightInput = weightInputs[i];
 
     if (currentSets && currentSets[i]) {
-      // Current session active data
       input.value = currentSets[i].reps ?? "";
       weightInput.value = currentSets[i].weight ?? "";
     } else if (lastSets && lastSets[i]) {
-      // Previous session data pre-filled with high transparency styling
+      // Set value and add high-transparency styling class
       if (lastSets[i].reps !== null && lastSets[i].reps !== undefined) {
         input.value = lastSets[i].reps;
         input.classList.add("previous-session-val");
@@ -180,7 +167,7 @@ function addExerciseCard(name, currentSets, lastSets) {
       }
     }
 
-    // Clear ghost value when field is focused/clicked
+    // Remove old value and transparent styling when focused
     [input, weightInput].forEach(inp => {
       inp.addEventListener("focus", () => {
         if (inp.classList.contains("previous-session-val")) {
@@ -191,7 +178,6 @@ function addExerciseCard(name, currentSets, lastSets) {
     });
   });
 
-  // ---- Save button state management ----
   function markUnsaved() {
     saveBtn.classList.remove("is-saved", "is-error", "is-saving");
     saveBtn.disabled = false;
@@ -222,7 +208,6 @@ function addExerciseCard(name, currentSets, lastSets) {
     markUnsaved();
   }
 
-  // Any edit removes transparent class & marks card as unsaved
   [...repsInputs, ...weightInputs].forEach(input => {
     input.addEventListener("input", () => {
       input.classList.remove("previous-session-val");
@@ -230,7 +215,7 @@ function addExerciseCard(name, currentSets, lastSets) {
     });
   });
 
-  // ---- Save handler ----
+  // ---- Save button ----
   saveBtn.addEventListener("click", async () => {
     const sets = [...repsInputs].map((repsInput, i) => ({
       reps: repsInput.classList.contains("previous-session-val") ? "" : repsInput.value,
@@ -258,7 +243,7 @@ function addExerciseCard(name, currentSets, lastSets) {
     }
   });
 
-  // ---- Remove handler ----
+  // ---- Delete button ----
   node.querySelector(".remove-exercise-btn").addEventListener("click", async () => {
     if (!confirm(`Remove "${name}" and its logged history? This can't be undone.`)) return;
     try {
@@ -285,11 +270,10 @@ backBtn.addEventListener("click", () => {
   showScreen(splitScreen);
 });
 
-// ---------- Load session state ----------
+// ---------- Load state: Empty screen on start ----------
 async function loadState(split) {
-  // Clear existing cards to ensure a clean slate at session startup
   exerciseList.innerHTML = "";
 }
 
-// ---------- Kick things off ----------
+// ---------- Kick off ----------
 checkAuthAndInit();
