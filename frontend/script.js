@@ -16,7 +16,7 @@ EXERCISES["Custom"] = [...EXERCISES["Upper Body"], ...EXERCISES["Lower Body"]];
 
 const CREATE_NEW = "__create_new__";
 
-// Backend API base — matches app.py's route prefixes:
+// Backend API base — matches app.py's route prefixes
 const API_ROOT = "/api";
 const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
@@ -82,7 +82,7 @@ document.querySelectorAll(".split-btn").forEach(btn => {
 async function startWorkout(split) {
   splitTitle.textContent = split;
   populateExerciseSelect(split);
-  exerciseList.innerHTML = ""; // Clear cards when switching screens
+  exerciseList.innerHTML = ""; // Clear existing cards when starting split
   await loadState(split);
   showScreen(workoutScreen);
 }
@@ -123,7 +123,7 @@ addBtn.addEventListener("click", async () => {
 
   let previousSessionSets = null;
 
-  // Fetch performance from previous session to populate high-transparency ghost values
+  // Fetch performance from previous session
   try {
     const res = await apiFetch(
       `${WORKOUTS_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`
@@ -167,12 +167,12 @@ function addExerciseCard(name, currentSets, lastSets) {
       input.value = currentSets[i].reps ?? "";
       weightInput.value = currentSets[i].weight ?? "";
     } else if (lastSets && lastSets[i]) {
-      // Previous session data pre-filled with high-transparency styling
-      if (lastSets[i].reps !== null && lastSets[i].reps !== undefined) {
+      // Previous session data pre-filled with high-transparency ghost styling
+      if (lastSets[i].reps !== null && lastSets[i].reps !== undefined && lastSets[i].reps !== "") {
         input.value = lastSets[i].reps;
         input.classList.add("previous-session-val");
       }
-      if (lastSets[i].weight !== null && lastSets[i].weight !== undefined) {
+      if (lastSets[i].weight !== null && lastSets[i].weight !== undefined && lastSets[i].weight !== "") {
         weightInput.value = lastSets[i].weight;
         weightInput.classList.add("previous-session-val");
       }
@@ -180,10 +180,10 @@ function addExerciseCard(name, currentSets, lastSets) {
 
     // Clear ghost value when field is focused/clicked
     [input, weightInput].forEach(inp => {
-      inp.addEventListener("focus", () => {
-        if (inp.classList.contains("previous-session-val")) {
-          inp.value = "";
-          inp.classList.remove("previous-session-val");
+      inp.addEventListener("focus", function() {
+        if (this.classList.contains("previous-session-val")) {
+          this.value = "";
+          this.classList.remove("previous-session-val");
         }
       });
     });
@@ -283,10 +283,10 @@ backBtn.addEventListener("click", () => {
   showScreen(splitScreen);
 });
 
-// ---------- Load session state: Clear cards for a fresh start ----------
+// ---------- Load session state: Clear cards on load ----------
 async function loadState(split) {
   exerciseList.innerHTML = "";
 }
 
-// ---------- Kick things off ----------
+// ---------- Kick off ----------
 checkAuthAndInit();

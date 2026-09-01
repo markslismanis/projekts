@@ -440,6 +440,6 @@ select:focus-visible {
 /* Styling for ghost values from previous workout session */
 .reps-input.previous-session-val, 
 .weight-input.previous-session-val {
-  color: var(--text-faint);
-  opacity: 0.45;
+  color: var(--text-faint) !important;
+  opacity: 0.45 !important;
 }
