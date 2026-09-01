@@ -307,8 +307,8 @@ async function loadState(split) {
         `${WORKOUTS_BASE}/${encodeURIComponent(split)}/${encodeURIComponent(name)}`
       );
       if (!exRes.ok) continue;
-      const { sets, last } = await exRes.json();
-      addExerciseCard(name, sets, last);
+      const { sets } = await exRes.json();
+      addExerciseCard(name, null,sets);
     }
   } catch (err) {
     console.error("Could not reach backend — is app.py running?", err);
