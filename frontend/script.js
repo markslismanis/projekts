@@ -26,16 +26,10 @@ const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
 
 // ---------- Auth-aware fetch wrapper ----------
-// Every backend call made *during* app use goes through this instead of raw
-// fetch(). If the session isn't logged in, app.py's @login_required returns
-// 401 — this catches that centrally and bounces to Google sign-in, so no
-// individual call site has to remember to check auth itself.
 async function apiFetch(url, options) {
   const res = await fetch(url, options);
   if (res.status === 401) {
     window.location.href = "/login";
-    // Throw so the calling code's try/catch stops instead of using a response
-    // that was never actually meant to be read as data.
     throw new Error("Not logged in — redirecting");
   }
   return res;
@@ -62,11 +56,6 @@ function showScreen(screen) {
 }
 
 // ---------- Initial auth check ----------
-// Runs once on page load. Unlike apiFetch (which auto-redirects to /login
-// on any 401 mid-use), this just quietly decides which screen to show —
-// we don't want to force a Google redirect before the user has even
-// seen the app. login-screen is active by default in the HTML, so if
-// this check fails or the backend is unreachable, that's simply left showing.
 async function checkAuthAndInit() {
   try {
     const res = await fetch(`${API_ROOT}/me`);
@@ -78,10 +67,6 @@ async function checkAuthAndInit() {
   }
 }
 
-// If the browser restores this page from its back/forward cache (e.g. after
-// hitting Back post-logout, or just reopening a stale tab), the DOM can
-// still show whatever screen and exercise cards were on-screen before —
-// force a fresh login check instead of trusting that stale state.
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
     exerciseList.innerHTML = "";
@@ -132,17 +117,31 @@ customInput.addEventListener("keydown", (e) => {
 });
 
 // ---------- Add exercises ----------
-addBtn.addEventListener("click", () => {
+addBtn.addEventListener("click", async () => {
   const name = exerciseSelect.value === CREATE_NEW
     ? customInput.value.trim()
     : exerciseSelect.value;
 
   if (!name) return;
 
-  // Freshly added by hand -> no current values, no "last time" hint yet
-  addExerciseCard(name, null, null);
+  let lastSets = null;
 
-  // Reset the picker back to the first real option after adding
+  // Fetch performance from previous session to populate high-transparency ghost values
+  try {
+    const res = await apiFetch(
+      `${WORKOUTS_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      lastSets = data.sets; 
+    }
+  } catch (err) {
+    console.error("Could not fetch previous session data", err);
+  }
+
+  addExerciseCard(name, null, lastSets);
+
+  // Reset dropdown menu selection
   const list = EXERCISES[currentSplit] || [];
   exerciseSelect.value = list[0] ?? CREATE_NEW;
   toggleCustomInput();
@@ -150,8 +149,8 @@ addBtn.addEventListener("click", () => {
 
 /**
  * Builds one exercise card.
- * currentSets: sets to pre-fill into the inputs (from the most recent save), or null
- * lastSets: sets to show as placeholder hints ("what you did last time"), or null
+ * currentSets: sets saved during active session, or null
+ * lastSets: sets from previous session to render as transparent ghost values
  */
 function addExerciseCard(name, currentSets, lastSets) {
   const node = template.content.cloneNode(true);
@@ -166,22 +165,33 @@ function addExerciseCard(name, currentSets, lastSets) {
     const weightInput = weightInputs[i];
 
     if (currentSets && currentSets[i]) {
+      // Current session active data
       input.value = currentSets[i].reps ?? "";
       weightInput.value = currentSets[i].weight ?? "";
-    }
-
-    // "Last time" values show as placeholder text — visible only while the field is empty
-    if (lastSets && lastSets[i]) {
+    } else if (lastSets && lastSets[i]) {
+      // Previous session data pre-filled with high transparency styling
       if (lastSets[i].reps !== null && lastSets[i].reps !== undefined) {
-        input.placeholder = String(lastSets[i].reps);
+        input.value = lastSets[i].reps;
+        input.classList.add("previous-session-val");
       }
       if (lastSets[i].weight !== null && lastSets[i].weight !== undefined) {
-        weightInput.placeholder = String(lastSets[i].weight);
+        weightInput.value = lastSets[i].weight;
+        weightInput.classList.add("previous-session-val");
       }
     }
+
+    // Clear ghost value when field is focused/clicked
+    [input, weightInput].forEach(inp => {
+      inp.addEventListener("focus", () => {
+        if (inp.classList.contains("previous-session-val")) {
+          inp.value = "";
+          inp.classList.remove("previous-session-val");
+        }
+      });
+    });
   });
 
-  // ---- This card's own Save button state (independent of every other card) ----
+  // ---- Save button state management ----
   function markUnsaved() {
     saveBtn.classList.remove("is-saved", "is-error", "is-saving");
     saveBtn.disabled = false;
@@ -206,24 +216,25 @@ function addExerciseCard(name, currentSets, lastSets) {
     saveBtn.textContent = "Retry";
   }
 
-  // If we loaded existing data for this exercise, it's already saved on the backend.
-  // Freshly added exercises (currentSets is null) start as unsaved.
   if (currentSets && currentSets.length) {
     markSaved();
   } else {
     markUnsaved();
   }
 
-  // Any edit marks this specific card as unsaved again
+  // Any edit removes transparent class & marks card as unsaved
   [...repsInputs, ...weightInputs].forEach(input => {
-    input.addEventListener("input", markUnsaved);
+    input.addEventListener("input", () => {
+      input.classList.remove("previous-session-val");
+      markUnsaved();
+    });
   });
 
-  // ---- Save this exercise only -> POST /save/<split>/<exercise> ----
+  // ---- Save handler ----
   saveBtn.addEventListener("click", async () => {
     const sets = [...repsInputs].map((repsInput, i) => ({
-      reps: repsInput.value,
-      weight: weightInputs[i].value,
+      reps: repsInput.classList.contains("previous-session-val") ? "" : repsInput.value,
+      weight: weightInputs[i].classList.contains("previous-session-val") ? "" : weightInputs[i].value,
     }));
 
     markSaving();
@@ -237,18 +248,17 @@ function addExerciseCard(name, currentSets, lastSets) {
         }
       );
       if (!res.ok) {
-        console.error("Save failed with status", res.status);
         markErrorState();
         return;
       }
       markSaved();
     } catch (err) {
-      console.error("Could not reach backend — is app.py running?", err);
+      console.error("Could not reach backend", err);
       markErrorState();
     }
   });
 
-  // ---- Remove -> DELETE /workouts/<split>/<exercise> ----
+  // ---- Remove handler ----
   node.querySelector(".remove-exercise-btn").addEventListener("click", async () => {
     if (!confirm(`Remove "${name}" and its logged history? This can't be undone.`)) return;
     try {
@@ -256,13 +266,9 @@ function addExerciseCard(name, currentSets, lastSets) {
         `${WORKOUTS_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`,
         { method: "DELETE" }
       );
-      if (!res.ok) {
-        alert("Could not delete from the server. Try again.");
-        return;
-      }
+      if (!res.ok) return alert("Could not delete from the server.");
     } catch (err) {
-      alert("Could not reach the backend to delete. Is app.py running?");
-      return;
+      return alert("Could not reach backend server.");
     }
     card.remove();
   });
@@ -279,41 +285,10 @@ backBtn.addEventListener("click", () => {
   showScreen(splitScreen);
 });
 
-// ---------- Load existing exercises + their history for this split ----------
-//
-// app.py's GET /workouts/<split> returns a FLAT list of every individual row
-// (one entry per set, not grouped by exercise) — unlike the exercise-specific
-// route, which already returns {sets, last}. So here we:
-//   1. fetch the flat list to discover which exercises exist in this split
-//   2. for each distinct exercise name, fetch its {sets, last} individually
+// ---------- Load session state ----------
 async function loadState(split) {
+  // Clear existing cards to ensure a clean slate at session startup
   exerciseList.innerHTML = "";
-  try {
-    const res = await apiFetch(`${WORKOUTS_BASE}/${encodeURIComponent(split)}`);
-    if (!res.ok) return;
-    const rows = await res.json();
-
-    // Pull out distinct exercise names, keeping the order they first appear in
-    const exerciseNames = [];
-    rows.forEach(row => {
-      if (!exerciseNames.includes(row.exercise)) {
-        exerciseNames.push(row.exercise);
-      }
-    });
-
-    // Fetch each exercise's current + last sets, one request per exercise
-    for (const name of exerciseNames) {
-      const exRes = await apiFetch(
-        `${WORKOUTS_BASE}/${encodeURIComponent(split)}/${encodeURIComponent(name)}`
-      );
-      if (!exRes.ok) continue;
-      const { sets } = await exRes.json();
-      addExerciseCard(name, null,sets);
-    }
-  } catch (err) {
-    console.error("Could not reach backend — is app.py running?", err);
-    alert("Could not load your workouts. Make sure the backend server is running.");
-  }
 }
 
 // ---------- Kick things off ----------
