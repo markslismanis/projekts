@@ -437,3 +437,9 @@ select:focus-visible {
   .exercise-name { font-size: 1.1rem; }
   .save-btn { min-width: 50px; padding: 6px 8px; font-size: 0.65rem; }
 }
+/* Styling for ghost values from previous workout session */
+.reps-input.previous-session-val, 
+.weight-input.previous-session-val {
+  color: var(--text-faint);
+  opacity: 0.45;
+}
