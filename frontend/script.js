@@ -78,6 +78,18 @@ async function checkAuthAndInit() {
   }
 }
 
+// If the browser restores this page from its back/forward cache (e.g. after
+// hitting Back post-logout, or just reopening a stale tab), the DOM can
+// still show whatever screen and exercise cards were on-screen before —
+// force a fresh login check instead of trusting that stale state.
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) {
+    exerciseList.innerHTML = "";
+    showScreen(loginScreen);
+    checkAuthAndInit();
+  }
+});
+
 // ---------- Split selection ----------
 document.querySelectorAll(".split-btn").forEach(btn => {
   btn.addEventListener("click", () => {
