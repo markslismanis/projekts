@@ -96,7 +96,7 @@ document.querySelectorAll(".split-btn").forEach(btn => {
 async function startWorkout(split) {
   splitTitle.textContent = split;
   populateExerciseSelect(split);
-  await loadState(split);
+  loadState(split); // just clears any leftover cards — nothing auto-loads
   showScreen(workoutScreen);
 }
 
@@ -127,6 +127,8 @@ customInput.addEventListener("keydown", (e) => {
 });
 
 // ---------- Add exercises ----------
+// This is the ONLY way an exercise card appears — opening a split never
+// auto-populates cards on its own.
 addBtn.addEventListener("click", async () => {
   const name = exerciseSelect.value === CREATE_NEW
     ? customInput.value.trim()
@@ -152,15 +154,15 @@ addBtn.addEventListener("click", async () => {
     );
     if (res.ok) {
       const data = await res.json();
-      // This exercise's most recent saved sets become the "last time" hint
-      // for this freshly-added card (it has no current/unsaved values yet).
+      // Most recent saved sets for this exercise become the ghost "last
+      // time" placeholder text on the freshly-added card.
       previousSessionSets = data.sets && data.sets.length ? data.sets : data.last;
     }
   } catch (err) {
     console.error("Could not fetch previous session data", err);
   }
 
-  addExerciseCard(name, null, previousSessionSets);
+  addExerciseCard(name, previousSessionSets);
 
   const list = EXERCISES[currentSplit] || [];
   exerciseSelect.value = list[0] ?? CREATE_NEW;
@@ -169,12 +171,10 @@ addBtn.addEventListener("click", async () => {
 
 /**
  * Builds one exercise card.
- * currentSets: this session's already-saved values, shown as real input values (bold/saved state)
- * lastSets: previous session's values, shown as highlighted-but-editable hints —
- *           clicking into a hinted field clears the hint so the user can type fresh numbers,
- *           but leaving it untouched and hitting Save still saves the shown (hinted) value.
+ * lastSets: previous session's values, shown ONLY as placeholder ghost text —
+ * never a real value. Save always sends exactly what the user actually typed.
  */
-function addExerciseCard(name, currentSets, lastSets) {
+function addExerciseCard(name, lastSets) {
   const node = template.content.cloneNode(true);
   const card = node.querySelector(".exercise-card");
   const saveBtn = node.querySelector(".save-btn");
@@ -186,28 +186,14 @@ function addExerciseCard(name, currentSets, lastSets) {
   repsInputs.forEach((input, i) => {
     const weightInput = weightInputs[i];
 
-    if (currentSets && currentSets[i]) {
-      input.value = currentSets[i].reps ?? "";
-      weightInput.value = currentSets[i].weight ?? "";
-    } else if (lastSets && lastSets[i]) {
+    if (lastSets && lastSets[i]) {
       if (lastSets[i].reps !== null && lastSets[i].reps !== undefined && lastSets[i].reps !== "") {
-        input.value = lastSets[i].reps;
-        input.classList.add("previous-session-val");
+        input.placeholder = String(lastSets[i].reps);
       }
       if (lastSets[i].weight !== null && lastSets[i].weight !== undefined && lastSets[i].weight !== "") {
-        weightInput.value = lastSets[i].weight;
-        weightInput.classList.add("previous-session-val");
+        weightInput.placeholder = String(lastSets[i].weight);
       }
     }
-
-    [input, weightInput].forEach(inp => {
-      inp.addEventListener("focus", function () {
-        if (this.classList.contains("previous-session-val")) {
-          this.value = "";
-          this.classList.remove("previous-session-val");
-        }
-      });
-    });
   });
 
   function markUnsaved() {
@@ -234,24 +220,13 @@ function addExerciseCard(name, currentSets, lastSets) {
     saveBtn.textContent = "Retry";
   }
 
-  if (currentSets && currentSets.length) {
-    markSaved();
-  } else {
-    markUnsaved();
-  }
+  markUnsaved(); // freshly added card — nothing saved for this session yet
 
   [...repsInputs, ...weightInputs].forEach(input => {
-    input.addEventListener("input", () => {
-      input.classList.remove("previous-session-val");
-      markUnsaved();
-    });
+    input.addEventListener("input", markUnsaved);
   });
 
   // ---- Save this exercise -> POST /save/<split>/<exercise> ----
-  // Sends whatever is actually showing in each field — including untouched
-  // "last time" hints. That means clicking Save without editing anything
-  // logs the same numbers as last time, which is the expected behavior for
-  // "I did the same as before."
   saveBtn.addEventListener("click", async () => {
     const sets = [...repsInputs].map((repsInput, i) => ({
       reps: repsInput.value,
@@ -273,9 +248,6 @@ function addExerciseCard(name, currentSets, lastSets) {
         markErrorState();
         return;
       }
-      // Values just saved are now the "current" state — clear the hint styling
-      // so they read as confirmed rather than still-a-suggestion.
-      [...repsInputs, ...weightInputs].forEach(inp => inp.classList.remove("previous-session-val"));
       markSaved();
     } catch (err) {
       console.error("Could not reach backend — is app.py running?", err);
@@ -309,41 +281,11 @@ function addExerciseCard(name, currentSets, lastSets) {
   exerciseList.appendChild(node);
 }
 
-// ---------- Load existing exercises + their history for this split ----------
-//
-// Runs every time a split is opened. GET /workouts/<split> returns a FLAT
-// list of every individual saved row for that split — one entry per set,
-// not grouped by exercise — so here we:
-//   1. fetch the flat list to discover which exercises exist in this split
-//   2. for each distinct exercise name, fetch its {sets, last} individually
-//      and render a card: current session bold/saved, previous session as
-//      the editable "last time" hint.
-async function loadState(split) {
+// ---------- Split screen state ----------
+// Only clears leftover cards from a previous visit — exercises are never
+// auto-loaded, only added manually via the dropdown above.
+function loadState(split) {
   exerciseList.innerHTML = "";
-  try {
-    const res = await apiFetch(`${WORKOUTS_BASE}/${encodeURIComponent(split)}`);
-    if (!res.ok) return;
-    const rows = await res.json();
-
-    const exerciseNames = [];
-    rows.forEach(row => {
-      if (!exerciseNames.includes(row.exercise)) {
-        exerciseNames.push(row.exercise);
-      }
-    });
-
-    for (const name of exerciseNames) {
-      const exRes = await apiFetch(
-        `${WORKOUTS_BASE}/${encodeURIComponent(split)}/${encodeURIComponent(name)}`
-      );
-      if (!exRes.ok) continue;
-      const { sets, last } = await exRes.json();
-      addExerciseCard(name, sets, last);
-    }
-  } catch (err) {
-    console.error("Could not reach backend — is app.py running?", err);
-    alert("Could not load your workouts. Make sure the backend server is running.");
-  }
 }
 
 // ---------- Data screen ----------
@@ -365,7 +307,7 @@ async function openDataScreen() {
     } else {
       cachedWorkoutLogs = [];
       workoutDataBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Failed to load data.</td></tr>`;
-      return; // don't let renderCurrentView() overwrite this with "no logs found"
+      return;
     }
   } catch (err) {
     console.error("Error fetching data logs:", err);
