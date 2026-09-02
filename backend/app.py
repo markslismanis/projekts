@@ -74,6 +74,30 @@ def logout():
 def me():
     return jsonify({"email": session['user_email']})
 
+@app.route("/workouts", methods=["GET"])
+@login_required
+def get_all_workouts():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM workouts ORDER BY saved_at").fetchall()
+    conn.close()
+
+    # Group flat rows (one per set) into per-session objects the frontend
+    # expects: one entry per (split, exercise, saved_at) with a sets array.
+    sessions = {}
+    for row in rows:
+        key = (row["split"], row["exercise"], row["saved_at"])
+        if key not in sessions:
+            sessions[key] = {
+                "split": row["split"],
+                "exercise": row["exercise"],
+                "timestamp": row["saved_at"],
+                "sets": []
+            }
+        sessions[key]["sets"].append({"reps": row["reps"], "weight": row["weight"]})
+
+    return jsonify(list(sessions.values()))
+
 @app.route("/save/<split>/<exercise>", methods=["POST"])
 @login_required
 def save_workout(split, exercise):
