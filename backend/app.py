@@ -14,7 +14,7 @@ load_dotenv(os.path.join(basedir, "keys.env"))
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
-CORS(app)
+CORS(app, supports_credentials=True)
 
 oauth = OAuth(app)
 google = oauth.register(
