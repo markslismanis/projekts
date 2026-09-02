@@ -15,7 +15,7 @@ EXERCISES["Custom"] = [...EXERCISES["Upper Body"], ...EXERCISES["Lower Body"]];
 
 const CREATE_NEW = "__create_new__";
 
-const API_ROOT = "";
+const API_ROOT = "/api";
 const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
 
@@ -43,7 +43,8 @@ const backBtn = document.getElementById("back-btn");
 const dataBackBtn = document.getElementById("data-back-btn");
 const template = document.getElementById("exercise-template");
 
-const viewToggleBtns = document.querySelectorAll(".view-toggle-btn");
+const viewTableBtn = document.getElementById("view-table-btn");
+const viewOverloadBtn = document.getElementById("view-overload-btn");
 const dataCategoryFilter = document.getElementById("data-category-filter");
 const workoutDataBody = document.getElementById("workout-data-body");
 const tableViewContainer = document.getElementById("table-view-container");
@@ -51,8 +52,8 @@ const overloadViewContainer = document.getElementById("overload-view-container")
 const overloadCardsContainer = document.getElementById("overload-cards-container");
 
 let currentSplit = null;
-let cachedWorkoutLogs = [];
 let currentDataView = "Table";
+let cachedWorkoutLogs = [];
 
 // ---------- Screen switching ----------
 function showScreen(screen) {
@@ -95,7 +96,6 @@ document.querySelectorAll(".split-btn").forEach(btn => {
 async function startWorkout(split) {
   splitTitle.textContent = split;
   populateExerciseSelect(split);
-  exerciseList.innerHTML = "";
   await loadState(split);
   showScreen(workoutScreen);
 }
@@ -134,6 +134,16 @@ addBtn.addEventListener("click", async () => {
 
   if (!name) return;
 
+  // Don't add a duplicate card if this exercise is already showing
+  const alreadyShown = [...exerciseList.querySelectorAll(".exercise-name")]
+    .some(el => el.textContent === name);
+  if (alreadyShown) {
+    const list = EXERCISES[currentSplit] || [];
+    exerciseSelect.value = list[0] ?? CREATE_NEW;
+    toggleCustomInput();
+    return;
+  }
+
   let previousSessionSets = null;
 
   try {
@@ -142,7 +152,9 @@ addBtn.addEventListener("click", async () => {
     );
     if (res.ok) {
       const data = await res.json();
-      previousSessionSets = data.sets || null; 
+      // This exercise's most recent saved sets become the "last time" hint
+      // for this freshly-added card (it has no current/unsaved values yet).
+      previousSessionSets = data.sets && data.sets.length ? data.sets : data.last;
     }
   } catch (err) {
     console.error("Could not fetch previous session data", err);
@@ -155,6 +167,13 @@ addBtn.addEventListener("click", async () => {
   toggleCustomInput();
 });
 
+/**
+ * Builds one exercise card.
+ * currentSets: this session's already-saved values, shown as real input values (bold/saved state)
+ * lastSets: previous session's values, shown as highlighted-but-editable hints —
+ *           clicking into a hinted field clears the hint so the user can type fresh numbers,
+ *           but leaving it untouched and hitting Save still saves the shown (hinted) value.
+ */
 function addExerciseCard(name, currentSets, lastSets) {
   const node = template.content.cloneNode(true);
   const card = node.querySelector(".exercise-card");
@@ -182,7 +201,7 @@ function addExerciseCard(name, currentSets, lastSets) {
     }
 
     [input, weightInput].forEach(inp => {
-      inp.addEventListener("focus", function() {
+      inp.addEventListener("focus", function () {
         if (this.classList.contains("previous-session-val")) {
           this.value = "";
           this.classList.remove("previous-session-val");
@@ -228,10 +247,15 @@ function addExerciseCard(name, currentSets, lastSets) {
     });
   });
 
+  // ---- Save this exercise -> POST /save/<split>/<exercise> ----
+  // Sends whatever is actually showing in each field — including untouched
+  // "last time" hints. That means clicking Save without editing anything
+  // logs the same numbers as last time, which is the expected behavior for
+  // "I did the same as before."
   saveBtn.addEventListener("click", async () => {
     const sets = [...repsInputs].map((repsInput, i) => ({
-      reps: repsInput.classList.contains("previous-session-val") ? "" : repsInput.value,
-      weight: weightInputs[i].classList.contains("previous-session-val") ? "" : weightInputs[i].value,
+      reps: repsInput.value,
+      weight: weightInputs[i].value,
     }));
 
     markSaving();
@@ -245,16 +269,21 @@ function addExerciseCard(name, currentSets, lastSets) {
         }
       );
       if (!res.ok) {
+        console.error("Save failed with status", res.status);
         markErrorState();
         return;
       }
+      // Values just saved are now the "current" state — clear the hint styling
+      // so they read as confirmed rather than still-a-suggestion.
+      [...repsInputs, ...weightInputs].forEach(inp => inp.classList.remove("previous-session-val"));
       markSaved();
     } catch (err) {
-      console.error("Could not reach backend", err);
+      console.error("Could not reach backend — is app.py running?", err);
       markErrorState();
     }
   });
 
+  // ---- Remove -> DELETE /workouts/<split>/<exercise> ----
   node.querySelector(".remove-exercise-btn").addEventListener("click", async () => {
     if (!confirm(`Remove "${name}" and its logged history? This can't be undone.`)) return;
     try {
@@ -262,9 +291,13 @@ function addExerciseCard(name, currentSets, lastSets) {
         `${WORKOUTS_BASE}/${encodeURIComponent(currentSplit)}/${encodeURIComponent(name)}`,
         { method: "DELETE" }
       );
-      if (!res.ok) return alert("Could not delete from the server.");
+      if (!res.ok) {
+        alert("Could not delete from the server. Try again.");
+        return;
+      }
     } catch (err) {
-      return alert("Could not reach backend server.");
+      alert("Could not reach the backend to delete. Is app.py running?");
+      return;
     }
     card.remove();
   });
@@ -276,50 +309,95 @@ function addExerciseCard(name, currentSets, lastSets) {
   exerciseList.appendChild(node);
 }
 
-// ---------- Data View Logic ----------
+// ---------- Load existing exercises + their history for this split ----------
+//
+// Runs every time a split is opened. GET /workouts/<split> returns a FLAT
+// list of every individual saved row for that split — one entry per set,
+// not grouped by exercise — so here we:
+//   1. fetch the flat list to discover which exercises exist in this split
+//   2. for each distinct exercise name, fetch its {sets, last} individually
+//      and render a card: current session bold/saved, previous session as
+//      the editable "last time" hint.
+async function loadState(split) {
+  exerciseList.innerHTML = "";
+  try {
+    const res = await apiFetch(`${WORKOUTS_BASE}/${encodeURIComponent(split)}`);
+    if (!res.ok) return;
+    const rows = await res.json();
+
+    const exerciseNames = [];
+    rows.forEach(row => {
+      if (!exerciseNames.includes(row.exercise)) {
+        exerciseNames.push(row.exercise);
+      }
+    });
+
+    for (const name of exerciseNames) {
+      const exRes = await apiFetch(
+        `${WORKOUTS_BASE}/${encodeURIComponent(split)}/${encodeURIComponent(name)}`
+      );
+      if (!exRes.ok) continue;
+      const { sets, last } = await exRes.json();
+      addExerciseCard(name, sets, last);
+    }
+  } catch (err) {
+    console.error("Could not reach backend — is app.py running?", err);
+    alert("Could not load your workouts. Make sure the backend server is running.");
+  }
+}
+
+// ---------- Data screen ----------
 async function openDataScreen() {
   showScreen(dataScreen);
   dataCategoryFilter.value = "All";
   currentDataView = "Table";
-  viewToggleBtns.forEach(btn => btn.classList.toggle("active", btn.dataset.view === "Table"));
-  toggleDataView();
-  
+  viewTableBtn.classList.add("active");
+  viewOverloadBtn.classList.remove("active");
+  tableViewContainer.style.display = "block";
+  overloadViewContainer.style.display = "none";
+
   workoutDataBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Loading logs...</td></tr>`;
 
   try {
     const res = await apiFetch(WORKOUTS_BASE);
     if (res.ok) {
       cachedWorkoutLogs = await res.json();
-      renderCurrentView();
     } else {
+      cachedWorkoutLogs = [];
       workoutDataBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Failed to load data.</td></tr>`;
+      return; // don't let renderCurrentView() overwrite this with "no logs found"
     }
   } catch (err) {
     console.error("Error fetching data logs:", err);
+    cachedWorkoutLogs = [];
     workoutDataBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Error reaching server.</td></tr>`;
+    return;
   }
+
+  renderCurrentView();
 }
 
-function toggleDataView() {
-  if (currentDataView === "Table") {
-    tableViewContainer.style.display = "block";
-    overloadViewContainer.style.display = "none";
-  } else {
-    tableViewContainer.style.display = "none";
-    overloadViewContainer.style.display = "block";
-  }
+function switchDataView(view) {
+  currentDataView = view;
+  viewTableBtn.classList.toggle("active", view === "Table");
+  viewOverloadBtn.classList.toggle("active", view === "ProgressiveOverload");
+  tableViewContainer.style.display = view === "Table" ? "block" : "none";
+  overloadViewContainer.style.display = view === "Table" ? "none" : "block";
+  renderCurrentView();
 }
 
 function renderCurrentView() {
-  const mode = currentDataView;
   const selectedCategory = dataCategoryFilter.value;
-
-  if (mode === "Table") {
+  if (currentDataView === "Table") {
     renderDataTable(cachedWorkoutLogs, selectedCategory);
   } else {
     renderProgressiveOverload(cachedWorkoutLogs, selectedCategory);
   }
 }
+
+viewTableBtn.addEventListener("click", () => switchDataView("Table"));
+viewOverloadBtn.addEventListener("click", () => switchDataView("ProgressiveOverload"));
+dataCategoryFilter.addEventListener("change", renderCurrentView);
 
 function renderDataTable(logs, selectedCategory) {
   workoutDataBody.innerHTML = "";
@@ -337,7 +415,7 @@ function renderDataTable(logs, selectedCategory) {
     const tr = document.createElement("tr");
 
     const dateFormatted = log.timestamp
-      ? new Date(log.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
+      ? new Date(log.timestamp.replace(" ", "T")).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
       : "N/A";
 
     const sets = log.sets || [];
@@ -368,17 +446,14 @@ function renderProgressiveOverload(logs, selectedCategory) {
     : logs.filter(item => item.split === selectedCategory);
 
   if (!filtered || filtered.length === 0) {
-    overloadCardsContainer.innerHTML = `<p style="text-align:center;">No workout logs found for this category.</p>`;
+    overloadCardsContainer.innerHTML = `<p style="text-align:center; color: var(--text-faint);">No workout logs found for this category.</p>`;
     return;
   }
 
-  // Group workouts by unique exercise key (split + exercise name)
   const exerciseMap = {};
   filtered.forEach(log => {
     const key = `${log.split || 'Custom'} - ${log.exercise}`;
-    if (!exerciseMap[key]) {
-      exerciseMap[key] = [];
-    }
+    if (!exerciseMap[key]) exerciseMap[key] = [];
     exerciseMap[key].push(log);
   });
 
@@ -386,24 +461,20 @@ function renderProgressiveOverload(logs, selectedCategory) {
 
   Object.keys(exerciseMap).forEach(key => {
     const history = exerciseMap[key];
-    
-    // Sort descending by timestamp so history[0] is the latest session
-    history.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    history.sort((a, b) => new Date((b.timestamp || "").replace(" ", "T")) - new Date((a.timestamp || "").replace(" ", "T")));
 
     const latest = history[0];
     const previous = history[1] || null;
 
-    // Set 1 is a warmup set -> Check Set 2 (sets[1]) for the first working set
     const set2 = (latest.sets && latest.sets[1]) ? latest.sets[1] : null;
     const set2Reps = set2 ? parseInt(set2.reps, 10) : 0;
 
-    // Trigger condition: Set 2 (first working set) reps > 8
     if (set2Reps > 8) {
       candidatesCount++;
       const currentWeight = set2.weight ? parseFloat(set2.weight) : 0;
       const recommendedWeight = currentWeight > 0 ? currentWeight + 2.5 : null;
 
-      let recText = recommendedWeight 
+      let recText = recommendedWeight
         ? `Hit ${set2Reps} reps on Set 2! Increase weight from <strong>${currentWeight}kg</strong> &rarr; <strong>${recommendedWeight}kg</strong> next session.`
         : `Hit ${set2Reps} reps on Set 2! Increase load or reps for next workout.`;
 
@@ -414,21 +485,18 @@ function renderProgressiveOverload(logs, selectedCategory) {
 
       const renderSessionRow = (label, logObj) => {
         if (!logObj) {
-          return `<tr>
-            <td><strong>${label}</strong></td>
-            <td>-</td><td>-</td><td>-</td><td>-</td>
-          </tr>`;
+          return `<tr><td><strong>${label}</strong></td><td>-</td><td>-</td><td>-</td><td>-</td></tr>`;
         }
-        const dateStr = logObj.timestamp 
-          ? new Date(logObj.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' })
+        const dateStr = logObj.timestamp
+          ? new Date(logObj.timestamp.replace(" ", "T")).toLocaleDateString([], { month: 'short', day: 'numeric' })
           : '';
-        const sets = logObj.sets || [];
+        const s = logObj.sets || [];
         return `<tr>
-          <td><strong>${label}</strong> <br><small style="color:var(--text-faint);">${dateStr}</small></td>
-          <td>${formatSet(sets[0])}</td>
-          <td>${formatSet(sets[1])}</td>
-          <td>${formatSet(sets[2])}</td>
-          <td>${formatSet(sets[3])}</td>
+          <td><strong>${label}</strong><br><small style="color:var(--text-faint);">${dateStr}</small></td>
+          <td>${formatSet(s[0])}</td>
+          <td>${formatSet(s[1])}</td>
+          <td>${formatSet(s[2])}</td>
+          <td>${formatSet(s[3])}</td>
         </tr>`;
       };
 
@@ -440,21 +508,13 @@ function renderProgressiveOverload(logs, selectedCategory) {
             <div class="overload-title">${latest.exercise}</div>
             <small style="color: var(--text-faint);">${latest.split || 'Custom'}</small>
           </div>
-          <div class="overload-badge">⚡ Ready for Overload</div>
+          <div class="overload-badge">Ready for Overload</div>
         </div>
-        
-        <p style="margin-bottom: 12px; font-size: 0.95rem; color: var(--text-main);">${recText}</p>
-
+        <p style="margin-bottom: 12px; font-size: 0.9rem; color: var(--text-dim);">${recText}</p>
         <div class="overload-table-wrapper">
           <table class="overload-table">
             <thead>
-              <tr>
-                <th>Session</th>
-                <th>Set 1 (Warmup)</th>
-                <th>Set 2</th>
-                <th>Set 3</th>
-                <th>Set 4</th>
-              </tr>
+              <tr><th>Session</th><th>Set 1</th><th>Set 2</th><th>Set 3</th><th>Set 4</th></tr>
             </thead>
             <tbody>
               ${renderSessionRow('Last Session', latest)}
@@ -469,28 +529,14 @@ function renderProgressiveOverload(logs, selectedCategory) {
 
   if (candidatesCount === 0) {
     overloadCardsContainer.innerHTML = `
-      <div style="text-align: center; padding: 20px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color);">
-        <h3>No Progressive Overload Targets Found</h3>
-        <p style="color: var(--text-faint); margin-top: 6px;">
+      <div style="text-align: center; padding: 24px; background: var(--surface); border-radius: 4px; border: 1px solid var(--border);">
+        <h2 style="margin: 0 0 6px;">No Overload Targets Found</h2>
+        <p style="color: var(--text-faint); margin: 0;">
           None of your logged exercises exceeded 8 reps on Set 2 (first working set) in their latest session.
         </p>
       </div>`;
   }
 }
-
-viewToggleBtns.forEach(btn => {
-  btn.addEventListener("click", () => {
-    if (btn.dataset.view === currentDataView) return;
-    currentDataView = btn.dataset.view;
-    viewToggleBtns.forEach(b => b.classList.toggle("active", b === btn));
-    toggleDataView();
-    renderCurrentView();
-  });
-});
-
-dataCategoryFilter.addEventListener("change", () => {
-  renderCurrentView();
-});
 
 // ---------- Navigation ----------
 backBtn.addEventListener("click", () => {
@@ -500,11 +546,6 @@ backBtn.addEventListener("click", () => {
 dataBackBtn.addEventListener("click", () => {
   showScreen(splitScreen);
 });
-
-// ---------- Load session state ----------
-async function loadState(split) {
-  exerciseList.innerHTML = "";
-}
 
 // ---------- Kick off ----------
 checkAuthAndInit();
