@@ -15,7 +15,7 @@ EXERCISES["Custom"] = [...EXERCISES["Upper Body"], ...EXERCISES["Lower Body"]];
 
 const CREATE_NEW = "__create_new__";
 
-const API_ROOT = "/api";
+const API_ROOT = "";
 const SAVE_BASE = `${API_ROOT}/save`;
 const WORKOUTS_BASE = `${API_ROOT}/workouts`;
 
@@ -43,7 +43,7 @@ const backBtn = document.getElementById("back-btn");
 const dataBackBtn = document.getElementById("data-back-btn");
 const template = document.getElementById("exercise-template");
 
-const dataViewFilter = document.getElementById("data-view-filter");
+const viewToggleBtns = document.querySelectorAll(".view-toggle-btn");
 const dataCategoryFilter = document.getElementById("data-category-filter");
 const workoutDataBody = document.getElementById("workout-data-body");
 const tableViewContainer = document.getElementById("table-view-container");
@@ -52,6 +52,7 @@ const overloadCardsContainer = document.getElementById("overload-cards-container
 
 let currentSplit = null;
 let cachedWorkoutLogs = [];
+let currentDataView = "Table";
 
 // ---------- Screen switching ----------
 function showScreen(screen) {
@@ -279,7 +280,8 @@ function addExerciseCard(name, currentSets, lastSets) {
 async function openDataScreen() {
   showScreen(dataScreen);
   dataCategoryFilter.value = "All";
-  dataViewFilter.value = "Table";
+  currentDataView = "Table";
+  viewToggleBtns.forEach(btn => btn.classList.toggle("active", btn.dataset.view === "Table"));
   toggleDataView();
   
   workoutDataBody.innerHTML = `<tr><td colspan="7" style="text-align:center;">Loading logs...</td></tr>`;
@@ -299,7 +301,7 @@ async function openDataScreen() {
 }
 
 function toggleDataView() {
-  if (dataViewFilter.value === "Table") {
+  if (currentDataView === "Table") {
     tableViewContainer.style.display = "block";
     overloadViewContainer.style.display = "none";
   } else {
@@ -309,7 +311,7 @@ function toggleDataView() {
 }
 
 function renderCurrentView() {
-  const mode = dataViewFilter.value;
+  const mode = currentDataView;
   const selectedCategory = dataCategoryFilter.value;
 
   if (mode === "Table") {
@@ -476,9 +478,14 @@ function renderProgressiveOverload(logs, selectedCategory) {
   }
 }
 
-dataViewFilter.addEventListener("change", () => {
-  toggleDataView();
-  renderCurrentView();
+viewToggleBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.view === currentDataView) return;
+    currentDataView = btn.dataset.view;
+    viewToggleBtns.forEach(b => b.classList.toggle("active", b === btn));
+    toggleDataView();
+    renderCurrentView();
+  });
 });
 
 dataCategoryFilter.addEventListener("change", () => {
